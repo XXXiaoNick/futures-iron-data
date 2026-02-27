@@ -1,133 +1,144 @@
 # 贵金属期货交易终端
 
-每日定时采集贵金属现货及期货行情数据，生成静态 HTML 交易看板。
+离线优先的贵金属期货数据终端，一键采集 → 生成静态 HTML，双击即可打开，无需服务器。
+
+## 核心功能
+
+- **实时行情** — K线图 + 合约报价 + 持仓量/成交量
+- **AI 综合研判** — IDAF 三因子情景模型（DSCR × Basis-Carry × 技术面），输出 T+1/T+5 多空方向与置信度
+- **逐合约交割危机** — 五因子 Logistic 模型，对近3个合约分别计算交割压力概率（Tab 切换展示）
+- **多源新闻聚合** — 12个新闻源 + FinBERT/LM 双算法情绪分析
+- **CME/CFTC 深度数据** — 8个官方数据源多层 Fallback
+
+## 支持品种
+
+| 品种 | 代码 | 交易所 | 合约乘数 |
+|------|------|--------|----------|
+| 黄金 | AU | SHFE | 1000g/手 |
+| 白银 | AG | SHFE | 15kg/手 |
+| 铜 | CU | SHFE | 5吨/手 |
+| 铝 | AL | SHFE | 5吨/手 |
+| 铂金 | PT | SGE | 1g/手 |
+| 钯金 | PD | NYMEX | 100oz/手 |
 
 ## 项目结构
 
 ```
 precious-metals-terminal/
-├── config.py           # 品种配置、合约规则、数据源
-├── fetcher.py          # 核心数据采集脚本 (每日 9:00 运行)
-├── manage.py           # 数据管理工具 (列表/清理/索引)
-├── setup.sh            # 一键安装 & 配置定时任务
-├── index.html          # 交易终端前端页面
-├── README.md           # 本文档
-└── data/               # 按日期组织的数据 (自动创建)
-    ├── index.json      # 可用日期索引
-    ├── 2026-02-26/
-    │   └── market_data.json
-    ├── 2026-02-27/
-    │   └── market_data.json
-    └── ...
+├── fetcher.py          # 数据采集 + 模型计算 (5600行)
+├── build.py            # HTML 生成器 (870行)
+├── config.py           # 品种配置 + 合约规则
+├── data/
+│   └── YYYY-MM-DD/
+│       └── market_data.json
+├── docs/
+│   └── index.html      # 最终输出页面
+└── README.md
 ```
 
 ## 快速开始
 
-### 1. 安装依赖
+### 安装依赖
 
 ```bash
-pip install akshare requests beautifulsoup4 --break-system-packages
+pip install akshare yfinance requests pandas --break-system-packages
 ```
 
-### 2. 首次采集数据
+### 运行
 
 ```bash
+# 1. 采集数据 (自动保存到 data/当日日期/)
 python fetcher.py
+
+# 2. 生成页面
+python build.py
+
+# 3. 打开
+open docs/index.html     # macOS
+# 或 xdg-open docs/index.html  # Linux
+# 或直接双击 docs/index.html
 ```
 
-### 3. 打开看板
+重建历史日期的页面：
 
 ```bash
-# 方法1: 直接用 Python 起一个 HTTP 服务
-python -m http.server 8080
-
-# 方法2: 或任意 HTTP 服务器
-npx serve .
+python build.py 2026-02-26
 ```
 
-然后浏览器打开 `http://localhost:8080`
+## 数据架构
 
-> ⚠️ 必须通过 HTTP 服务器访问 (不能直接双击打开 index.html), 因为前端需要通过 fetch 加载 JSON 数据文件。
+### 采集管线 (`fetcher.py`)
 
-### 4. 设置每日自动采集
-
-```bash
-# 一键设置 (安装依赖 + 首次采集 + 设置cron)
-bash setup.sh
-
-# 或手动添加 cron
-crontab -e
-# 添加: 0 9 * * 1-5 cd /path/to/precious-metals-terminal && python3 fetcher.py >> cron.log 2>&1
+```
+fetch_all()
+  ├── fetch_realtime_price()      # 新浪期货实时报价
+  ├── fetch_contract_quotes()     # AKShare 合约明细 (OI/Vol/结算价)
+  ├── fetch_spot_kline()          # 60日K线 (新浪/AKShare)
+  ├── fetch_cme_stocks()          # CME仓库库存 (.xls解析)
+  ├── fetch_cme_crisis_data()     # CME/CFTC 8大数据源汇总
+  ├── fetch_indicators()          # SHFE库存 + 持仓 + 技术指标
+  ├── fetch_news()                # 12源新闻 + 情绪分析
+  ├── compute_predictions()       # IDAF三因子研判模型
+  ├── compute_delivery_crisis()   # 五因子综合危机概率
+  └── compute_per_contract_crisis()  # 逐合约危机 (近3月)
 ```
 
-## 数据源说明
+### CME/CFTC 数据源
 
-| 模块       | 数据源                       | 接口方式        |
-|-----------|------------------------------|----------------|
-| 现货K线    | AKShare (新浪期货日线)        | `futures_zh_daily_sina` |
-| 实时价格    | AKShare (期货实时行情)        | `futures_zh_spot` |
-| 期货合约    | 新浪财经 hq.sinajs.cn + AKShare | HTTP + API |
-| 库存数据    | 上期所仓单日报 (AKShare)      | `futures_shfe_warehouse_receipt` |
-| 持仓排名    | 上期所 (AKShare)             | `futures_shfe_position_rank` |
-| 新闻资讯    | 东方财富搜索 + 新浪财经搜索    | HTTP搜索 |
-| 算法预测    | 本地计算 (基差+库存+持仓)      | 内置模型 |
+| 因子 | 数据 | 源优先级 |
+|------|------|----------|
+| F1 覆盖率 | 前月OI | CME Bulletin PDF → Quotes API → yfinance → AKShare |
+| F2 期限结构 | 结算价 | CME Settlements HTML → API → Quotes API |
+| F3 库存流动 | 交割通知 | CME YTD PDF → 入口页PDF链接 |
+| F3 库存流动 | 日变化 | CME Stocks .xls → 本地CSV历史 |
+| F4 时点 | 日历 | CME Calendar HTML → 推算 |
+| F5 压力 | 保证金 | CME Margins HTML → API + Clearing Notices |
+| F5 压力 | COT | CFTC 短格式 → 长格式 → CSV |
+| F5 压力 | 升水 | Stooq → yfinance → 新浪外汇 |
 
-## 支持品种
+### 新闻源
 
-| 代码 | 品种   | 交易所 | 合约月份          |
-|------|--------|--------|-------------------|
-| AU   | 黄金   | 上期所 | 2,4,6,8,10,12月   |
-| AG   | 白银   | 上期所 | 2,4,6,8,10,12月   |
-| CU   | 铜     | 上期所 | 每月              |
-| AL   | 铝     | 上期所 | 每月              |
+**国内**: 东方财富(2个)、新浪财经、财联社、雪球、金十数据、同花顺
 
-## 数据管理
+**国际**: Google RSS、Reuters、Bloomberg、Kitco、Investing.com
 
-```bash
-# 列出所有可用数据日期
-python manage.py list
+**情绪算法**: FinBERT 词典 + Loughran-McDonald 金融词典 → 加权融合
 
-# 显示今日数据摘要
-python manage.py summary
+## 模型说明
 
-# 显示指定日期摘要
-python manage.py summary 2026-02-26
+### IDAF 三因子研判
 
-# 生成 data/index.json (前端自动发现可用日期)
-python manage.py index
+综合交割供需比(DSCR)、基差-持有成本偏离(Basis-Carry)、技术面动量，通过五情景蒙特卡洛模拟输出：
 
-# 清理30天前的旧数据
-python manage.py clean
+- 最可能交割率及对应价格
+- 概率加权预期价格
+- T+1 / T+5 方向判断 + 置信度
 
-# 清理7天前的旧数据
-python manage.py clean 7
+### 五因子交割危机模型
+
+```
+P(crisis) = Logistic( w₁·F1 + w₂·F2 + w₃·F3 + w₄·F4 + w₅·F5 )
+
+F1 覆盖率 (30%)  — 预期交割需求 / 可交割供给
+F2 期限结构 (25%) — Backwardation程度 (近月vs远月价差)
+F3 库存流动 (20%) — 注册仓单变化 + E/R缓冲 + 连续流失天数
+F4 时点 (10%)     — 距FND天数 (指数衰减)
+F5 压力 (15%)     — 年化波动率 + 保证金 + COT集中度 + 量比 + LBMA升水
 ```
 
-## 合约自动选取规则
+逐合约模式下，F1/F2/F4 使用各合约自身数据，F3/F5 品种级共享。
 
-系统自动选取当前日期之后最近的 **3个** 合约:
+输出范围 1%~95%，等级：低(<15%) → 中低(15-30%) → 中等(30-50%) → 高(50-70%) → 极高(>70%)
 
-- 跳过已到期合约 (当月及之前)
-- 按品种的合约月份规则生成
-- 例: 2026年2月 → `AG2604, AG2606, AG2608`
+## 前端功能
 
-## 算法预测说明
+- 品种 Tab 切换 (AU/AG/CU/AL/PT/PD)
+- 响应式双栏布局 (左: K线+合约 | 右: 研判+危机+新闻)
+- 逐合约交割危机 Tab 切换 (如 AU2604 / AU2606 / AU2608)
+- 非交易日容错 + Google Fonts 国内镜像 + 非阻塞加载
 
-模型基于以下三个维度分析不同交割率情景:
+## 开发说明
 
-1. **基差结构**: 期货价 vs 现货价的升贴水关系
-2. **库存趋势**: 交易所库存、注册仓单变化方向
-3. **持仓分析**: 多空持仓比、持仓集中度
+`build.py` 在生成页面时会自动补算缺失数据（情绪分析、IDAF预测、交割危机、逐合约危机），兼容历史数据重建。
 
-输出 5 个交割率情景 (5%/15%/30%/50%/70%+), 每个情景给出:
-- 预估价格
-- 发生概率
-- 方向判断 (偏多/中性/偏空)
-- 情景描述
-
-## 注意事项
-
-- 采集脚本在非交易时间运行时, 获取的是最近一个交易日数据
-- 新浪/东方财富接口为免费公开接口, 请控制访问频率
-- 五档盘口中, 买2-买5 和 卖2-卖5 为基于买一卖一的模拟数据 (免费接口限制)
-- 首次运行可能因接口变动需要微调, 查看 `fetcher.log` 排查
+所有数据序列化为 JSON 内嵌到 `index.html`，纯静态页面，可直接部署到 GitHub Pages 等静态托管。
