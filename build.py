@@ -2,8 +2,8 @@
 """
 贵金属期货交易终端 · 构建脚本
 ================================
-读取 data/YYYY-MM-DD/market_data.json → 生成 pages/index.html
-双击 pages/index.html 即可打开，无需服务器。
+读取 data/YYYY-MM-DD/market_data.json → 生成 docs/index.html
+双击 docs/index.html 即可打开，无需服务器。
 
 用法:
   python build.py                # 构建今天的数据
@@ -850,9 +850,9 @@ def build(date_str=None):
         pass
 
     raw = json.dumps(data, ensure_ascii=False)
-    pages_dir = os.path.join(BASE_DIR, "pages")
-    os.makedirs(pages_dir, exist_ok=True)
-    out = os.path.join(pages_dir, "index.html")
+    docs_dir = os.path.join(BASE_DIR, "docs")
+    os.makedirs(docs_dir, exist_ok=True)
+    out = os.path.join(docs_dir, "index.html")
     html = TEMPLATE.replace("%%DATA%%", raw).replace("%%DATE%%", date_str)
     with open(out, "w", encoding="utf-8") as f:
         f.write(html)
@@ -862,7 +862,7 @@ def build(date_str=None):
     print("  📁 " + out)
     print("  📦 " + str(kb) + " KB")
     print("  📅 数据日期: " + date_str)
-    print("  💡 双击 pages/index.html 即可打开!")
+    print("  💡 双击 docs/index.html 即可打开!")
     print("=" * 52)
 
 
